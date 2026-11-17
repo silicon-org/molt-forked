@@ -21,6 +21,9 @@ pub struct EvalPtr<'a> {
 
     // Whether we're evaluating commands or just checking for completeness.
     no_eval: bool,
+
+    // The nesting of command substitutions being parsed.
+    pub(crate) nesting: usize,
 }
 
 impl<'a> EvalPtr<'a> {
@@ -30,6 +33,7 @@ impl<'a> EvalPtr<'a> {
             bracket_term: false,
             term_char: None,
             no_eval: false,
+            nesting: 0,
         }
     }
 
@@ -45,6 +49,7 @@ impl<'a> EvalPtr<'a> {
             bracket_term: false,
             term_char: None,
             no_eval: false,
+            nesting: 0,
         }
     }
 

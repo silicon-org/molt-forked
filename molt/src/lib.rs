@@ -36,6 +36,7 @@ pub mod dict;
 mod eval_ptr;
 mod expr;
 pub mod interp;
+pub mod limits;
 mod list;
 pub mod prelude;
 mod tokenizer;

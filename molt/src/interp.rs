@@ -969,7 +969,9 @@ where
 
         if self.num_levels > self.recursion_limit {
             self.num_levels -= 1;
-            return molt_err!("too many nested calls to Interp::eval (infinite loop?)");
+            return Err(crate::limits::nesting_error(
+                "too many nested calls to Interp::eval (infinite loop?)".to_owned(),
+            ));
         }
 
         // NEXT, evaluate the script and translate the result to Ok or Error
@@ -1098,6 +1100,24 @@ where
         result_value
     }
 
+    /// Counts one more level of nesting at run time (a command substitution or an operator
+    /// of an expression) against the recursion limit.
+    pub(crate) fn enter_nested(&mut self) -> Result<(), Exception> {
+        if self.num_levels >= self.recursion_limit {
+            return Err(crate::limits::nesting_error(format!(
+                "more than {} nested evaluations, substitutions and expression operators",
+                self.recursion_limit
+            )));
+        }
+        self.num_levels += 1;
+        Ok(())
+    }
+
+    /// Ends a level counted by [`Self::enter_nested`].
+    pub(crate) fn leave_nested(&mut self) {
+        self.num_levels -= 1;
+    }
+
     #[inline]
     fn buffer_intermediate_error(&mut self, error: Exception) {
         #[cfg(feature = "wasm")]
@@ -1136,7 +1156,12 @@ where
                 let index = self.eval_word(index_word)?;
                 self.element(name, index.as_str())
             }
-            Word::Script(script) => self.eval_script(script),
+            Word::Script(script) => {
+                self.enter_nested()?;
+                let result = self.eval_script(script);
+                self.leave_nested();
+                result
+            }
             Word::Tokens(tokens) => {
                 let mut string = String::new();
                 for token in tokens {

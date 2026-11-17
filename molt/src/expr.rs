@@ -477,6 +477,10 @@ impl TclInt {
             let Some(power) = right.to_u32() else {
                 return molt_err!("integer exponent too large");
             };
+            crate::limits::check_integer(
+                left.bits().checked_mul(u64::from(power)),
+                "the operator **",
+            )?;
             return Ok(Self::big(left.pow(power)));
         }
         if matches!(operator, Token::LeftShift | Token::RightShift) {
@@ -491,6 +495,12 @@ impl TclInt {
             let magnitude = usize::try_from(magnitude).map_err(|_| {
                 Exception::molt_err("integer shift count too large".into())
             })?;
+            if left_shift {
+                crate::limits::check_integer(
+                    left.bits().checked_add(magnitude as u64),
+                    "the operator <<",
+                )?;
+            }
             return Ok(Self::big(if left_shift {
                 left << magnitude
             } else {
@@ -628,6 +638,23 @@ fn expr_top_level<Ctx: 'static>(interp: &mut Interp<Ctx>, string: &str) -> Datum
 #[allow(clippy::cognitive_complexity)]
 #[allow(clippy::float_cmp)]
 fn expr_get_value<Ctx: 'static>(
+    interp: &mut Interp<Ctx>,
+    info: &mut ExprInfo,
+    prec: i32,
+) -> DatumResult {
+    // Parentheses, unary operators, function arguments and the right operands of binary
+    // operators recurse here: each level counts against the recursion limit.
+    interp.enter_nested()?;
+    let result = expr_get_nested_value(interp, info, prec);
+    interp.leave_nested();
+    result
+}
+
+/// The body of [`expr_get_value`], which counts the nesting.
+#[allow(clippy::collapsible_if)]
+#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::float_cmp)]
+fn expr_get_nested_value<Ctx: 'static>(
     interp: &mut Interp<Ctx>,
     info: &mut ExprInfo,
     prec: i32,

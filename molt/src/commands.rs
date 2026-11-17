@@ -217,7 +217,13 @@ pub fn cmd_append<Ctx>(interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
         .unwrap_or_else(|_| String::new());
 
     // NEXT, append the remaining values to the string.
-    new_string.reserve(argv[2..].iter().map(|item| item.as_str().len()).sum());
+    let added = crate::limits::check_string(
+        argv[2..]
+            .iter()
+            .try_fold(new_string.len(), |n, item| n.checked_add(item.as_str().len())),
+        "append",
+    )? - new_string.len();
+    new_string.reserve(added);
     for item in &argv[2..] {
         new_string.push_str(item.as_str());
     }
@@ -425,6 +431,12 @@ pub fn cmd_continue<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResul
 /// Concatenates zero or more Tcl lists into one canonical list.
 #[cfg(feature = "full")]
 pub fn cmd_concat<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
+    let mut length = Some(0usize);
+    for value in &argv[1..] {
+        length =
+            length.and_then(|n| n.checked_add(value.as_list().map_or(0, |l| l.len())));
+    }
+    crate::limits::check_list(length, "concat")?;
     let capacity: usize = argv[1..]
         .iter()
         .filter_map(|value| value.try_as_str())
@@ -477,7 +489,13 @@ fn cmd_dict_append<Ctx>(interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult 
         Err(_) => dict_new(),
     };
     let mut value = dict.get(&argv[3]).map_or_else(String::new, ToString::to_string);
-    value.reserve(argv[4..].iter().map(|item| item.as_str().len()).sum());
+    let added = crate::limits::check_string(
+        argv[4..]
+            .iter()
+            .try_fold(value.len(), |n, item| n.checked_add(item.as_str().len())),
+        "dict append",
+    )? - value.len();
+    value.reserve(added);
     for item in &argv[4..] {
         value.push_str(item.as_str());
     }
@@ -1160,10 +1178,16 @@ pub fn cmd_join<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
     let list = &argv[1].as_list()?;
 
     let join_string = if argv.len() == 3 { argv[2].as_str() } else { " " };
-    let item_len: usize = list.iter().map(|value| value.as_str().len()).sum();
-    let mut output = String::with_capacity(
-        item_len + join_string.len().saturating_mul(list.len().saturating_sub(1)),
-    );
+    let length = list
+        .iter()
+        .try_fold(0usize, |n, value| n.checked_add(value.as_str().len()))
+        .and_then(|n| {
+            join_string
+                .len()
+                .checked_mul(list.len().saturating_sub(1))
+                .and_then(|j| n.checked_add(j))
+        });
+    let mut output = String::with_capacity(crate::limits::check_string(length, "join")?);
     for (index, value) in list.iter().enumerate() {
         if index != 0 {
             output.push_str(join_string);
@@ -1186,6 +1210,7 @@ pub fn cmd_lappend<Ctx>(interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult 
         Err(_) => Vec::new(),
     };
 
+    crate::limits::check_list(list.len().checked_add(argv.len() - 2), "lappend")?;
     let mut values = argv[2..].to_owned();
     list.append(&mut values);
     interp.set_var_return(&argv[1], Value::from(list))
@@ -1288,9 +1313,8 @@ pub fn cmd_lrepeat<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult
     }
     let count = usize::try_from(count)
         .map_err(|_| Exception::molt_err("list size overflow".into()))?;
-    let capacity = count
-        .checked_mul(argv.len() - 2)
-        .ok_or_else(|| Exception::molt_err("list size overflow".into()))?;
+    let capacity =
+        crate::limits::check_list(count.checked_mul(argv.len() - 2), "lrepeat")?;
     let mut output = Vec::with_capacity(capacity);
     for _ in 0..count {
         output.extend(argv[2..].iter().cloned());
@@ -1819,7 +1843,13 @@ pub fn cmd_switch<Ctx>(interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
 
 /// string cat ?*arg* ...?
 pub fn cmd_string_cat<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
-    let mut buff = String::new();
+    let length = crate::limits::check_string(
+        argv[2..]
+            .iter()
+            .try_fold(0usize, |n, arg| n.checked_add(arg.as_str().len())),
+        "string cat",
+    )?;
+    let mut buff = String::with_capacity(length);
 
     for arg in &argv[2..] {
         buff.push_str(arg.as_str());
@@ -2276,8 +2306,10 @@ pub fn cmd_string_range<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltR
 /// string repeat *string* *count*
 pub fn cmd_string_repeat<Ctx>(_interp: &mut Interp<Ctx>, argv: &[Value]) -> MoltResult {
     check_args(2, argv, 4, 4, "string count")?;
-    let count = argv[3].as_int()?.max(0) as usize;
-    molt_ok!(argv[2].as_str().repeat(count))
+    let count = usize::try_from(argv[3].as_int()?.max(0)).unwrap_or(usize::MAX);
+    let text = argv[2].as_str();
+    crate::limits::check_string(text.len().checked_mul(count), "string repeat")?;
+    molt_ok!(text.repeat(count))
 }
 
 /// string replace *string* *first* *last* ?*newstring*?

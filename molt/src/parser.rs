@@ -364,7 +364,24 @@ fn parse_bare_word(ctx: &mut EvalPtr, index_flag: bool) -> Result<Word, Exceptio
 
 /// Parses an embedded script in a bare or quoted word, returning the result as a
 /// Script.  It's an error if the close-bracket is missing.
+///
+/// More than [`MAX_PARSE_NESTING`](crate::limits::MAX_PARSE_NESTING) nested substitutions are
+/// an error (`MOLT LIMIT NESTING`), so a deeply nested text cannot overflow the stack.
 fn parse_brackets(ctx: &mut EvalPtr) -> Result<Script, Exception> {
+    use crate::limits::{nesting_error, MAX_PARSE_NESTING};
+    if ctx.nesting >= MAX_PARSE_NESTING {
+        return Err(nesting_error(format!(
+            "more than {MAX_PARSE_NESTING} nested command substitutions"
+        )));
+    }
+    ctx.nesting += 1;
+    let result = parse_nested_brackets(ctx);
+    ctx.nesting -= 1;
+    result
+}
+
+/// Parses an embedded script; [`parse_brackets`] counts the nesting.
+fn parse_nested_brackets(ctx: &mut EvalPtr) -> Result<Script, Exception> {
     // FIRST, skip the '['
     ctx.skip_char('[');
 
