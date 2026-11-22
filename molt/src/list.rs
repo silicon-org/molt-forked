@@ -144,13 +144,21 @@ fn parse_quoted_item(ctx: &mut Tokenizer) -> MoltResult {
         match ctx.peek() {
             Some('"') => {
                 ctx.skip();
-                return Ok(Value::from(item));
+
+                // As in Tcl, the closing quote must be followed by whitespace
+                // or the end of the list.
+                if ctx.at_end() || ctx.has(|ch| is_list_white(*ch)) || ctx.is_folded_newline() {
+                    return Ok(Value::from(item));
+                } else {
+                    return molt_err!("extra characters after close-quote");
+                }
             }
             Some('\\') => {
                 item.push(ctx.backslash_subst());
                 start = ctx.mark();
             }
-            _ => unreachable!(),
+            // The input ended before the closing quote.
+            _ => break,
         }
     }
 
@@ -411,6 +419,20 @@ mod tests {
     }
 
     // Most list parsing is tested in the Molt test suite.
+
+    #[test]
+    fn test_malformed_lists_are_errors() {
+        let msg = |s: &str| match get_list(s) {
+            Err(e) if e.is_error() => e.value().as_str().to_string(),
+            _ => panic!("expected an error for {:?}", s),
+        };
+        assert_eq!(msg("a \"b"), "unmatched open quote in list");
+        assert_eq!(msg("\"b\\"), "unmatched open quote in list");
+        assert_eq!(msg("a {b"), "unmatched open brace in list");
+        assert_eq!(msg("{a}b"), "extra characters after close-brace");
+        assert_eq!(msg("\"a\"b"), "extra characters after close-quote");
+        assert_eq!(get_list("\"a\" b").unwrap().len(), 2);
+    }
 
     #[test]
     fn test_issue_43() {
